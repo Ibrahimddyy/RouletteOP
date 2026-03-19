@@ -1,58 +1,76 @@
 import TelegramBot from "node-telegram-bot-api";
-import express from 'express'; // لإبقاء السيرفر شغالاً على Railway
+import express from 'express';
 
-// 1. إعداد السيرفر البسيط لإرضاء Railway (Health Check)
 const app = express();
 app.get('/', (req, res) => res.send('Roulette Bot is Online!'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-// 2. إعداد البوت باستخدام التوكن من المتغيرات البيئية
 const token = process.env.TELEGRAM_BOT_TOKEN;
-
-if (!token) {
-  throw new Error("TELEGRAM_BOT_TOKEN is missing in Environment Variables!");
-}
+if (!token) throw new Error("TELEGRAM_BOT_TOKEN is missing!");
 
 const bot = new TelegramBot(token, { polling: true });
 
-// --- ( /start ) أمر البداية بتنسيق فخم ---
-bot.onText(/\/start/, async (msg: any) => {
-  const chatId = msg.chat.id;
-  const welcomeText = `
-🏰 **أهلاً بك في بوت الروليت الملكي** 🏰
-أنا مساعدك الذكي لإدارة جولات الحظ بضغطة زر.
+// مخزن مؤقت للمشاركين (في الرام)
+let participants: Set<number> = new Set();
 
-📜 **الأوامر المتاحة:**
-🔹 /rou أو /roul - لبدء جولة روليت جديدة.
-🔹 /can أو /cancel - لإلغاء وحذف الرسالة.
-  `;
-  await bot.sendMessage(chatId, welcomeText, { parse_mode: 'Markdown' });
+bot.onText(/\/start/, async (msg: any) => {
+  await bot.sendMessage(msg.chat.id, "🏰 **أهلاً بك في بوت الروليت الملكي**\nاستخدم /rou لبدء جولة جديدة.");
 });
 
-// --- ( /rou أو /roul ) أمر الروليت ---
+// --- أمر الروليت مع نظام الأزرار والعداد ---
 bot.onText(/\/(rou|roul)/, async (msg: any) => {
   const chatId = msg.chat.id;
-  
-  // ملاحظة: هنا يجب أن يكون لديك منطق لاختيار الفائز
-  // الرسالة أدناه هي لتجربة استجابة الأمر
-  await bot.sendMessage(chatId, "🎰 جاري فحص المشاركين لبدء الجولة...");
-  
-  // إذا ظهرت رسالة "نقص المشاركين"، فهذا يعني أن الكود يحتاج لبيانات مستخدمين حقيقيين في المجموعة
-  console.log(` Roulette command triggered in chat: ${chatId}`);
+  participants.clear(); // تصفير القائمة لبدء جولة جديدة
+
+  const opts = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🎰 دخول الجولة (0 مشارك)", callback_data: "join_roulette" }]
+      ]
+    }
+  };
+
+  await bot.sendMessage(chatId, "📌 **بدأت جولة روليت جديدة!**\nاضغط على الزر أدناه لتسجيل دخولك:", opts);
 });
 
-// --- ( /can أو /cancel ) أمر الحذف والإلغاء ---
-bot.onText(/\/(can|cancel)/, async (msg: any) => {
-  const chatId = msg.chat.id;
-  const messageId = msg.message_id;
+// معالجة ضغطة زر "دخول"
+bot.on("callback_query", async (query: any) => {
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
+  const userId = query.from.id;
 
-  try {
-    await bot.deleteMessage(chatId, messageId.toString());
-    await bot.sendMessage(chatId, "❌ تم الإلغاء وحذف الأمر بنجاح.");
-  } catch (e) {
-    console.error("خطأ في حذف الرسالة:", e);
+  if (query.data === "join_roulette") {
+    if (participants.has(userId)) {
+      return bot.answerCallbackQuery(query.id, { text: "أنت مسجل بالفعل! ✅", show_alert: false });
+    }
+
+    participants.add(userId);
+    
+    // تحديث المربع (العداد) مع كل مشارك جديد
+    const updatedOpts = {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `🎰 دخول الجولة (${participants.size} مشارك)`, callback_data: "join_roulette" }]
+        ]
+      }
+    };
+
+    try {
+      await bot.editMessageReplyMarkup(updatedOpts.reply_markup, updatedOpts);
+      await bot.answerCallbackQuery(query.id, { text: "تم تسجيل دخولك بنجاح! 🎉" });
+    } catch (e) {
+      console.error("خطأ في التحديث:", e);
+    }
   }
 });
 
-console.log("Bot system is strictly running...");
+// أمر الإلغاء
+bot.onText(/\/(can|cancel)/, async (msg: any) => {
+  try {
+    await bot.deleteMessage(msg.chat.id, msg.message_id);
+    await bot.sendMessage(msg.chat.id, "❌ تم الإلغاء.");
+  } catch (e) {}
+});
