@@ -3,8 +3,7 @@ import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
 
 rounds = {}
 round_stack = {}
@@ -131,12 +130,20 @@ async def end_round(context, round_id, duration):
     if not r:
         return
 
-    users = list(r["users"].values())
+    users = list(r["users"].items())  # [(user_id, username_or_fullname)]
     winners = random.sample(users, min(len(users), r["winners"])) if users else []
 
-    text = "انتهت الجولة\nالفائزين:\n" + "\n".join(winners if winners else ["لا يوجد"])
+    if winners:
+        winner_texts = [
+            f"[@{uname}](tg://user?id={uid})" if uname else f"[مستخدم](tg://user?id={uid})"
+            for uid, uname in winners
+        ]
+    else:
+        winner_texts = ["لا يوجد"]
 
-    await context.bot.send_message(r["chat_id"], text)
+    text = "انتهت الجولة\nالفائزين:\n" + "\n".join(winner_texts)
+
+    await context.bot.send_message(r["chat_id"], text, parse_mode="Markdown")
 
     try:
         await context.bot.delete_message(r["chat_id"], r["msg_id"])
@@ -145,7 +152,7 @@ async def end_round(context, round_id, duration):
 
     if r["entr"] and users:
         try:
-            await context.bot.send_message(list(r["users"].keys())[0], "\n".join(users))
+            await context.bot.send_message(list(r["users"].keys())[0], "\n".join(u for _, u in users))
         except:
             pass
 
