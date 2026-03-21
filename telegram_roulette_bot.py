@@ -153,7 +153,10 @@ async def end_round(context, round_id, duration):
 
     if r["entr"] and users:
         try:
-            await context.bot.send_message(list(r["users"].keys())[0], "\n".join(u for _, u in users))
+            # السطر الجديد الذي يظهر اليوزر مع الرابط (مثل رسالة الفائزين):
+report_text = "📋 قائمة المشاركين:\n\n" + "\n".join([f"[@{uname}](tg://user?id={uid})" if uname else f"[مستخدم](tg://user?id={uid})" for uid, uname in users])
+await context.bot.send_message(list(r["users"].keys())[0], report_text, parse_mode="Markdown")
+
         except:
             pass
 
