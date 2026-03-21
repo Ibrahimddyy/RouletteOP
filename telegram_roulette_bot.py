@@ -3,7 +3,8 @@ import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
+import os
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 rounds = {}
 round_stack = {}
