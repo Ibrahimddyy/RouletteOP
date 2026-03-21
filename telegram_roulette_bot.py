@@ -150,18 +150,14 @@ async def end_round(context, round_id, duration):
         await context.bot.delete_message(r["chat_id"], r["msg_id"])
     except:
         pass
-
     if r["entr"] and users:
         try:
-            # السطر الجديد الذي يظهر اليوزر مع الرابط (مثل رسالة الفائزين):
-report_text = "📋 قائمة المشاركين:\n\n" + "\n".join([f"[@{uname}](tg://user?id={uid})" if uname else f"[مستخدم](tg://user?id={uid})" for uid, uname in users])
-await context.bot.send_message(list(r["users"].keys())[0], report_text, parse_mode="Markdown")
-
-        except:
-            pass
-
-    rounds.pop(round_id, None)
-
+            report_text = "📋 **قائمة المشاركين:**\n\n" + "\n".join([f"👤 [@{u}](tg://user?id={i})" if u else f"👤 [مستخدم](tg://user?id={i})" for i, u in users])
+            await context.bot.send_message(list(r["users"].keys())[0], report_text, parse_mode="Markdown")
+        except Exception as e:
+            print(f"Error: {e}")
+        rounds.pop(round_id, None)
+        
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
