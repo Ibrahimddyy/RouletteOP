@@ -1,9 +1,10 @@
 import asyncio
 import random
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-import os
+# جلب التوكن من إعدادات Railway
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 rounds = {}
@@ -11,55 +12,61 @@ round_stack = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = """
-الأوامر:
+🎰 **بوت الروليت الاحترافي** 🎰
 
-/rou [options]
-تشغيل جولة روليت
+الأمر الأساسي: `/rou`
+الخيارات (كلها اختيارية ويمكن دمجها):
+• `1m` أو `1h`: وقت الجولة.
+• `2w`: عدد الفائزين (مثلاً 2 فائزين).
+• `sig` + الرمز: اشتراط وجود شعار بالاسم (مثال: `sig ❦`).
+• `del` + اليوزر: منع شخص من هذه الجولة (مثال: `del @user`).
+• `entr`: إرسال قائمة المشاركين لك في الخاص.
 
-الخيارات:
-1m / 1h → وقت الجولة
-2w → عدد الفائزين
-sig ❦ → شرط شعار بالاسم
-del @user → منع شخص
-entr → ارسال المشاركين خاص
-
-/can → إلغاء آخر جولة
+مثال شامل:
+`/rou 2m 3w sig ❦ del @ali entr`
 """
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 def parse_args(args):
-    duration = 60
-    winners = 1
+    duration = 60  # افتراضي دقيقة
+    winners = 1    # افتراضي فائز واحد
     sig = None
     banned = set()
     entr = False
 
-    for a in args:
+    i = 0
+    while i < len(args):
+        a = args[i].lower()
         if a.endswith("m"):
-            duration = int(a[:-1]) * 60
+            try: duration = int(a[:-1]) * 60
+            except: pass
         elif a.endswith("h"):
-            duration = int(a[:-1]) * 3600
+            try: duration = int(a[:-1]) * 3600
+            except: pass
         elif a.endswith("w"):
-            winners = int(a[:-1])
+            try: winners = int(a[:-1])
+            except: pass
         elif a == "entr":
             entr = True
         elif a == "sig":
-            pass
-        elif a.startswith("@"):
-            banned.add(a)
-        else:
-            sig = a
-
+            if i + 1 < len(args):
+                sig = args[i+1]
+                i += 1
+        elif a == "del":
+            if i + 1 < len(args):
+                # تخزين اليوزر بدون @ للمقارنة السهلة
+                banned.add(args[i+1].replace("@", ""))
+                i += 1
+        i += 1
     return duration, winners, sig, banned, entr
 
 async def rou(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.delete()
+    try: await update.message.delete()
+    except: pass
 
     chat_id = update.effective_chat.id
     args = context.args
-
     duration, winners, sig, banned, entr = parse_args(args)
-
     round_id = random.randint(100000, 999999)
 
     rounds[round_id] = {
@@ -69,121 +76,104 @@ async def rou(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "sig": sig,
         "banned": banned,
         "entr": entr,
-        "msg_id": None
+        "msg_id": None,
+        "creator_id": update.effective_user.id
     }
 
     round_stack.setdefault(chat_id, []).append(round_id)
 
-    text = f"جولة روليت\nالوقت: {duration//60} دقيقة\nالفائزين: {winners}"
+    # بناء رسالة المشاركة ديناميكياً
+    text = f"🎰 **جولة روليت جديدة**\n"
+    text += f"⏱ الوقت: `{duration//60}` دقيقة\n"
+    if winners > 1:
+        text += f"🏆 سيتم سحب `{winners}` فائزين\n"
     if sig:
-        text += f"\nالشعار المطلوب: {sig}"
+        text += f"🛡 المتطلبات: وجود الشعار ( {sig} ) في اسمك\n"
     if entr:
-        text += f"\nسيتم تسجيل النتائج"
+        text += f"📝 سيتم تسجيل النتائج وإرسالها للمنظم\n"
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"مشاركة (0)", callback_data=f"join_{round_id}")]
     ])
 
-    msg = await context.bot.send_message(chat_id, text, reply_markup=keyboard)
+    msg = await context.bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="Markdown")
     rounds[round_id]["msg_id"] = msg.message_id
-
     asyncio.create_task(end_round(context, round_id, duration))
 
 async def join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-
     user = query.from_user
-    data = query.data
-
-    round_id = int(data.split("_")[1])
+    round_id = int(query.data.split("_")[1])
     r = rounds.get(round_id)
 
     if not r:
+        await query.answer("انتهت هذه الجولة")
         return
 
-    if user.username and f"@{user.username}" in r["banned"]:
-        await query.answer("تم منعك من المشاركة", show_alert=True)
+    # رابعاً: شرط المنع (del)
+    if user.username and user.username in r["banned"]:
+        await query.answer("للاسف تم منعك من المشاركة في هذه الجوله", show_alert=True)
         return
 
-    if r["sig"] and (not user.full_name or r["sig"] not in user.full_name):
-        await query.answer(f"ضع الشعار {r['sig']} باسمك", show_alert=True)
+    # ثالثاً: شرط الشعار (sig)
+    if r["sig"] and r["sig"] not in user.full_name:
+        await query.answer(f"يجب عليك وضع الشعار ( {r['sig']} ) في اسمك للمشاركة", show_alert=True)
         return
 
     if user.id in r["users"]:
-        await query.answer("انت مشارك بالفعل")
+        await query.answer("أنت مشارك بالفعل!")
         return
 
     r["users"][user.id] = user.username or user.full_name
-
     count = len(r["users"])
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"مشاركة ({count})", callback_data=f"join_{round_id}")]
-    ])
-
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"مشاركة ({count})", callback_data=f"join_{round_id}")]])
     await query.edit_message_reply_markup(reply_markup=keyboard)
 
 async def end_round(context, round_id, duration):
     await asyncio.sleep(duration)
-
     r = rounds.get(round_id)
-    if not r:
-        return
+    if not r: return
 
-    users = list(r["users"].items())  # [(user_id, username_or_fullname)]
-    winners = random.sample(users, min(len(users), r["winners"])) if users else []
+    users = list(r["users"].items())
+    winners_list = random.sample(users, min(len(users), r["winners"])) if users else []
 
-    if winners:
-        winner_texts = [
-            f"[@{uname}](tg://user?id={uid})" if uname else f"[مستخدم](tg://user?id={uid})"
-            for uid, uname in winners
-        ]
+    if winners_list:
+        winner_texts = [f"👤 [@{u}](tg://user?id={i})" if u else f"👤 [مستخدم](tg://user?id={i})" for i, u in winners_list]
+        text = "🏁 **انتهت الجولة**\n\n🎊 **الفائزين:**\n" + "\n".join(winner_texts)
     else:
-        winner_texts = ["لا يوجد"]
-
-    text = "انتهت الجولة\nالفائزين:\n" + "\n".join(winner_texts)
+        text = "🏁 **انتهت الجولة**\n\nلا يوجد مشاركين."
 
     await context.bot.send_message(r["chat_id"], text, parse_mode="Markdown")
+    try: await context.bot.delete_message(r["chat_id"], r["msg_id"])
+    except: pass
 
-    try:
-        await context.bot.delete_message(r["chat_id"], r["msg_id"])
-    except:
-        pass
+    # خامساً: إرسال القائمة للخاص (entr)
     if r["entr"] and users:
         try:
-            report_text = "📋 **قائمة المشاركين:**\n\n" + "\n".join([f"👤 [@{u}](tg://user?id={i})" if u else f"👤 [مستخدم](tg://user?id={i})" for i, u in users])
-            await context.bot.send_message(list(r["users"].keys())[0], report_text, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Error: {e}")
-        rounds.pop(round_id, None)
-        
+            report_text = "📋 **قائمة المشاركين في الجولة:**\n\n" + "\n".join([f"👤 [@{u}](tg://user?id={i})" if u else f"👤 [مستخدم](tg://user?id={i})" for i, u in users])
+            await context.bot.send_message(r["creator_id"], report_text, parse_mode="Markdown")
+        except: pass
+
+    rounds.pop(round_id, None)
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
-    if chat_id not in round_stack or not round_stack[chat_id]:
-        return
-
-    round_id = round_stack[chat_id].pop()
-
-    r = rounds.pop(round_id, None)
-    if not r:
-        return
-
-    try:
-        await context.bot.delete_message(chat_id, r["msg_id"])
-    except:
-        pass
+    if chat_id in round_stack and round_stack[chat_id]:
+        rid = round_stack[chat_id].pop()
+        r = rounds.pop(rid, None)
+        if r:
+            try: await context.bot.delete_message(chat_id, r["msg_id"])
+            except: pass
+            await update.message.reply_text("تم إلغاء الجولة بنجاح.")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("rou", rou))
     app.add_handler(CommandHandler("can", cancel))
     app.add_handler(CallbackQueryHandler(join))
-
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+    
